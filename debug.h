@@ -12,6 +12,7 @@
 #ifndef _JANUS_DEBUG_H
 #define _JANUS_DEBUG_H
 
+#include <time.h>
 #include <glib.h>
 #include <glib/gprintf.h>
 #include "log.h"
@@ -85,24 +86,32 @@ static const char *janus_log_prefix[] = {
 /*! \brief Logger based on different levels, which can either be displayed
  * or not according to the configuration of the gateway.
  * The format must be a string literal. */
+
+
 #define JANUS_LOG(level, format, ...) \
 do { \
 	if (level > LOG_NONE && level <= LOG_MAX && level <= janus_log_level) { \
 		char janus_log_ts[64] = ""; \
 		char janus_log_src[128] = ""; \
+		char janus_log_ms[64] = ""; \
 		if (janus_log_timestamps) { \
 			struct tm janustmresult; \
-			time_t janusltime = time(NULL); \
-			localtime_r(&janusltime, &janustmresult); \
+			struct timespec janustimespec; \
+			clock_gettime(CLOCK_REALTIME, &janustimespec); \
+            time_t janusltime = janustimespec.tv_sec; \
+			gmtime_r(&janusltime, &janustmresult); \
+			snprintf(janus_log_ms, sizeof(janus_log_ms), \
+			         ".%03ldZ] ", janustimespec.tv_nsec/1000000); \
 			strftime(janus_log_ts, sizeof(janus_log_ts), \
-			         "[%a %b %e %T %Y] ", &janustmresult); \
+			         "[%Y-%m-%dT%T", &janustmresult); \
 		} \
 		if (level == LOG_FATAL || level == LOG_ERR || level == LOG_DBG) { \
 			snprintf(janus_log_src, sizeof(janus_log_src), \
 			         "[%s:%s:%d] ", __FILE__, __FUNCTION__, __LINE__); \
 		} \
-		JANUS_PRINT("%s%s%s" format, \
+		JANUS_PRINT("%s%s%s%s" format, \
 			janus_log_ts, \
+			janus_log_ms, \
 			janus_log_prefix[level | ((int)janus_log_colors << 3)], \
 			janus_log_src, \
 			##__VA_ARGS__); \
