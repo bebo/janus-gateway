@@ -249,6 +249,9 @@ typedef struct janus_seq_info {
 enum {
 	SEQ_MISSING,
 	SEQ_NACKED,
+	SEQ_NACKED2,
+	SEQ_NACKED3,
+	SEQ_NACKED4,
 	SEQ_GIVEUP,
 	SEQ_RECVED
 };

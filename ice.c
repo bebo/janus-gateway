@@ -335,8 +335,14 @@ static void janus_cleanup_nack_buffer(gint64 now, janus_ice_stream *stream) {
 }
 
 
-#define SEQ_MISSING_WAIT 12000 /*  12ms */
-#define SEQ_NACKED_WAIT 155000 /* 155ms */
+// fpn: assuming < 70 ms ms round trip - should make this dynamic
+
+#define SEQ_MISSING_WAIT  12000 /*  12ms */
+#define SEQ_NACKED_WAIT   90000 /* 155ms  - not anymore */
+#define SEQ_NACKED_WAIT2 160000
+#define SEQ_NACKED_WAIT3 230000
+#define SEQ_NACKED_WAIT4 300000
+
 /* seq_info_t list functions */
 static void janus_seq_append(seq_info_t **head, seq_info_t *new_seq) {
 	if(*head == NULL) {
@@ -2035,6 +2041,18 @@ void janus_ice_cb_nice_recv(NiceAgent *agent, guint stream_id, guint component_i
 							cur_seq->state = SEQ_NACKED;
 						} else if(cur_seq->state == SEQ_NACKED  && now - cur_seq->ts > SEQ_NACKED_WAIT) {
 							JANUS_LOG(LOG_HUGE, "[%"SCNu64"] Missed sequence number %"SCNu16", sending 2nd NACK\n", handle->handle_id, cur_seq->seq);
+							nacks = g_slist_append(nacks, GUINT_TO_POINTER(cur_seq->seq));
+							cur_seq->state = SEQ_NACKED2;
+						} else if(cur_seq->state == SEQ_NACKED2  && now - cur_seq->ts > SEQ_NACKED_WAIT2) {
+							JANUS_LOG(LOG_VERB, "[%"SCNu64"] Missed sequence number %"SCNu16", sending 3rd NACK\n", handle->handle_id, cur_seq->seq);
+							nacks = g_slist_append(nacks, GUINT_TO_POINTER(cur_seq->seq));
+							cur_seq->state = SEQ_NACKED3;
+						} else if(cur_seq->state == SEQ_NACKED3  && now - cur_seq->ts > SEQ_NACKED_WAIT3) {
+							JANUS_LOG(LOG_VERB, "[%"SCNu64"] Missed sequence number %"SCNu16", sending 4th NACK\n", handle->handle_id, cur_seq->seq);
+							nacks = g_slist_append(nacks, GUINT_TO_POINTER(cur_seq->seq));
+							cur_seq->state = SEQ_NACKED4;
+						} else if(cur_seq->state == SEQ_NACKED4  && now - cur_seq->ts > SEQ_NACKED_WAIT4) {
+							JANUS_LOG(LOG_INFO, "[%"SCNu64"] Missed sequence number %"SCNu16", sending 5th NACK\n", handle->handle_id, cur_seq->seq);
 							nacks = g_slist_append(nacks, GUINT_TO_POINTER(cur_seq->seq));
 							cur_seq->state = SEQ_GIVEUP;
 						}
