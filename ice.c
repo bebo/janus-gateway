@@ -8,12 +8,12 @@
  * on. Incoming RTP and RTCP packets from peers are relayed to the associated
  * plugins by means of the incoming_rtp and incoming_rtcp callbacks. Packets
  * to be sent to peers are relayed by peers invoking the relay_rtp and
- * relay_rtcp gateway callbacks instead. 
- * 
+ * relay_rtcp gateway callbacks instead.
+ *
  * \ingroup protocols
  * \ref protocols
  */
- 
+
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <sys/socket.h>
@@ -301,8 +301,12 @@ static void janus_cleanup_nack_buffer(gint64 now, janus_ice_stream *stream, gboo
 }
 
 
-#define SEQ_MISSING_WAIT 12000 /*  12ms */
-#define SEQ_NACKED_WAIT 155000 /* 155ms */
+// fpn: assuming < 70 ms ms round trip - should make this dynamic
+
+#define SEQ_MISSING_WAIT  12000 /*  12ms */
+#define SEQ_NACKED_WAIT   90000 /* 155ms  - not anymore */
+#define SEQ_NACKED_WAIT2 160000
+
 /* janus_seq_info list functions */
 static void janus_seq_append(janus_seq_info **head, janus_seq_info *new_seq) {
 	if(*head == NULL) {
@@ -618,7 +622,7 @@ void janus_ice_init(gboolean ice_lite, gboolean ice_tcp, gboolean ipv6, uint16_t
 
 	/*! \note The RTP/RTCP port range configuration may be just a placeholder: for
 	 * instance, libnice supports this since 0.1.0, but the 0.1.3 on Fedora fails
-	 * when linking with an undefined reference to \c nice_agent_set_port_range 
+	 * when linking with an undefined reference to \c nice_agent_set_port_range
 	 * so this is checked by the install.sh script in advance. */
 	rtp_range_min = rtp_min_port;
 	rtp_range_max = rtp_max_port;
@@ -647,7 +651,7 @@ void janus_ice_init(gboolean ice_lite, gboolean ice_tcp, gboolean ipv6, uint16_t
 		JANUS_LOG(LOG_FATAL, "Got error %d (%s) trying to start handles watchdog...\n", error->code, error->message ? error->message : "??");
 		exit(1);
 	}
-	
+
 #ifdef HAVE_LIBCURL
 	/* Initialize the TURN REST API client stack, whether we're going to use it or not */
 	janus_turnrest_init();
@@ -865,7 +869,7 @@ int janus_ice_set_turn_server(gchar *turn_server, uint16_t turn_port, gchar *tur
 int janus_ice_set_turn_rest_api(gchar *api_server, gchar *api_key, gchar *api_method) {
 #ifndef HAVE_LIBCURL
 	JANUS_LOG(LOG_ERR, "Janus has been nuilt with no libcurl support, TURN REST API unavailable\n");
-	return -1; 
+	return -1;
 #else
 	if(api_server != NULL &&
 			(strstr(api_server, "http://") != api_server && strstr(api_server, "https://") != api_server)) {
@@ -880,7 +884,7 @@ int janus_ice_set_turn_rest_api(gchar *api_server, gchar *api_key, gchar *api_me
 
 
 /* ICE stuff */
-static const gchar *janus_ice_state_name[] = 
+static const gchar *janus_ice_state_name[] =
 {
 	"disconnected",
 	"gathering",
@@ -1616,7 +1620,7 @@ static void janus_ice_cb_new_selected_pair (NiceAgent *agent, guint stream_id, g
 	nice_address_to_string(&(remote->addr), (gchar *)&raddress);
 	lport = nice_address_get_port(&(local->addr));
 	rport = nice_address_get_port(&(remote->addr));
-	const char *ltype = NULL, *rtype = NULL; 
+	const char *ltype = NULL, *rtype = NULL;
 	switch(local->type) {
 		case NICE_CANDIDATE_TYPE_HOST:
 			ltype = "host";
@@ -1768,7 +1772,7 @@ static void janus_ice_cb_new_remote_candidate (NiceAgent *agent, NiceCandidate *
 	char buffer[100];
 	if(candidate->transport == NICE_CANDIDATE_TRANSPORT_UDP) {
 		g_snprintf(buffer, 100,
-			"%s %d %s %d %s %d typ prflx raddr %s rport %d\r\n", 
+			"%s %d %s %d %s %d typ prflx raddr %s rport %d\r\n",
 				candidate->foundation,
 				candidate->component_id,
 				"udp",
@@ -2021,7 +2025,7 @@ static void janus_ice_cb_nice_recv(NiceAgent *agent, guint stream_id, guint comp
 						/* Get current timestamp */
 						struct timeval now;
 						gettimeofday(&now,0);
-						
+
 						/* Create <seq num, time> pair */
 						janus_rtcp_transport_wide_cc_stats* stats = g_malloc0(sizeof(janus_rtcp_transport_wide_cc_stats));
 						/* Check if we have a sequence wrap */
@@ -2031,14 +2035,14 @@ static void janus_ice_cb_nice_recv(NiceAgent *agent, guint stream_id, guint comp
 
 						/* Get extended value */
 						guint32 transport_ext_seq_num = stream->transport_wide_cc_cycles<<16 | transport_seq_num;
-						
+
 						/* Store last received transport seq num */
 						stream->transport_wide_cc_last_seq_num = transport_seq_num;
 
 						/* Set stats values */
 						stats->transport_seq_num = transport_ext_seq_num;
 						stats->timestamp = (((guint64)now.tv_sec)*1E6+now.tv_usec);
-						
+
 						/* Lock & append to received list*/
 						janus_mutex_lock(&stream->mutex);
 						stream->transport_wide_received_seq_nums =  g_slist_prepend(stream->transport_wide_received_seq_nums, stats);
@@ -2170,6 +2174,10 @@ static void janus_ice_cb_nice_recv(NiceAgent *agent, guint stream_id, guint comp
 						} else if(cur_seq->state == SEQ_NACKED  && now - cur_seq->ts > SEQ_NACKED_WAIT) {
 							JANUS_LOG(LOG_HUGE, "[%"SCNu64"] Missed sequence number %"SCNu16" (%s stream #%d), sending 2nd NACK\n",
 								handle->handle_id, cur_seq->seq, video ? "video" : "audio", vindex);
+							nacks = g_slist_append(nacks, GUINT_TO_POINTER(cur_seq->seq));
+							cur_seq->state = SEQ_NACKED2;
+						} else if(cur_seq->state == SEQ_NACKED2  && now - cur_seq->ts > SEQ_NACKED_WAIT2) {
+							JANUS_LOG(LOG_VERB, "[%"SCNu64"] Missed sequence number %"SCNu16", sending 3rd NACK\n", handle->handle_id, cur_seq->seq);
 							nacks = g_slist_append(nacks, GUINT_TO_POINTER(cur_seq->seq));
 							cur_seq->state = SEQ_GIVEUP;
 						}
@@ -2687,7 +2695,7 @@ void janus_ice_setup_remote_candidates(janus_ice_handle *handle, guint stream_id
 	}
 	if(!component->candidates || !component->candidates->data) {
 		if(!janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_TRICKLE)
-				|| janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_ALL_TRICKLES)) { 
+				|| janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_ALL_TRICKLES)) {
 			JANUS_LOG(LOG_ERR, "[%"SCNu64"] No remote candidates for component %d in stream %d: was the remote SDP parsed?\n", handle->handle_id, component_id, stream_id);
 		}
 		return;
@@ -3221,30 +3229,30 @@ void *janus_ice_send_thread(void *data) {
 				/* Create a transport wide feedback message */
 				size_t size = 1300;
 				char rtcpbuf[1300];
-				
+
 				/* Lock session */
 				janus_mutex_lock(&handle->stream->mutex);
-				
+
 				/* Order packet list */
 				GSList* sorted = g_slist_sort(handle->stream->transport_wide_received_seq_nums, rtcp_transport_wide_cc_stats_comparator);
-				
+
 				/* Create full stats queue */
 				GQueue* packets = g_queue_new();
-				
+
 				/* For all packets */
 				GSList *it = NULL;
 				for (it = sorted; it; it = it->next) {
 					/* Get stat */
 					janus_rtcp_transport_wide_cc_stats* stats = (janus_rtcp_transport_wide_cc_stats*)it->data;
-					
+
 					/* Get transport seq */
 					guint32 transport_seq_num = stats->transport_seq_num;
-					
+
 					/* Check if it is an out of order  */
 					if (transport_seq_num < handle->stream->transport_wide_cc_last_feedback_seq_num)
 						/* Skip, it was already reported as lost */
 						continue;
-					
+
 					/* If not first */
 					if (handle->stream->transport_wide_cc_last_feedback_seq_num) {
 						/* For each lost */
@@ -3259,26 +3267,26 @@ void *janus_ice_send_thread(void *data) {
 							g_queue_push_tail(packets, missing);
 						}
 					}
-					
+
 					/* Store last */
 					handle->stream->transport_wide_cc_last_feedback_seq_num = transport_seq_num;
 
 					/* Add this one */
 					g_queue_push_tail(packets, stats);
 				}
-				
+
 				/* Clear stats */
 				g_slist_free(handle->stream->transport_wide_received_seq_nums);
-				
+
 				/* Reset list */
 				handle->stream->transport_wide_received_seq_nums = NULL;
-				
+
 				/* Get feedback pacakte count and increase it for next one */
 				guint8 feedback_packet_count = handle->stream->transport_wide_cc_feedback_count++;
-				
+
 				/* Unlock session */
 				janus_mutex_unlock(&handle->stream->mutex);
-				
+
 				/* Create rtcp packet */
 				int len = janus_rtcp_transport_wide_cc_feedback(rtcpbuf, size, handle->stream->video_ssrc, stream->video_ssrc_peer[0] , feedback_packet_count, packets);
 
